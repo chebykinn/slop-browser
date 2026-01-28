@@ -67,7 +67,7 @@ pub fn layout_flex(
     );
 
     // Calculate container's content width
-    let content_width = style.width.unwrap_or_else(|| {
+    let content_width = style.width.map(|w| w.to_px(containing_width)).unwrap_or_else(|| {
         containing_width
             - layout_box.dimensions.margin.horizontal()
             - layout_box.dimensions.padding.horizontal()
@@ -208,7 +208,7 @@ pub fn layout_flex(
     apply_positions(&mut lines, is_row, &layout_box.dimensions.padding, &layout_box.dimensions.border);
 
     // Set container height
-    let container_height = style.height.unwrap_or(total_cross_size);
+    let container_height = style.height.map(|h| h.to_px(total_cross_size)).unwrap_or(total_cross_size);
     layout_box.dimensions.content.height = container_height;
 }
 
@@ -241,7 +241,7 @@ fn layout_child_intrinsic(child: &mut LayoutBox, containing_width: f32, text_ren
         child.dimensions.content.width = width;
         child.dimensions.content.height = height;
     } else if let Some(w) = style.width {
-        child.dimensions.content.width = w;
+        child.dimensions.content.width = w.to_px(containing_width);
     } else {
         // Use available width minus margins/padding/border for block-level
         let available = containing_width
@@ -252,7 +252,7 @@ fn layout_child_intrinsic(child: &mut LayoutBox, containing_width: f32, text_ren
     }
 
     if let Some(h) = style.height {
-        child.dimensions.content.height = h;
+        child.dimensions.content.height = h.to_px(child.dimensions.content.height);
     } else if child.text_content.is_none() {
         // For non-text elements without explicit height, calculate from children
         let mut child_height = 0.0f32;

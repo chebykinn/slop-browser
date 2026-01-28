@@ -138,6 +138,12 @@ impl TextRenderer {
         self.measure_cache.clear();
     }
 
+    /// Check if text is ASCII-only (can use Basic shaping)
+    #[inline]
+    fn is_ascii_text(text: &str) -> bool {
+        text.bytes().all(|b| b < 128)
+    }
+
     /// Render all text groups in a single pass
     /// Each group has its own clip_top value (in physical pixels)
     /// Groups are rendered in order: first group's texts, then second group's texts, etc.
@@ -174,8 +180,19 @@ impl TextRenderer {
         }
         let mut all_text_data: Vec<TextData> = Vec::with_capacity(total_texts);
 
+        let viewport_height_f = viewport_height as f32;
+
         for (texts, clip_top) in text_groups.iter() {
+            let clip_top_logical = (*clip_top as f32) / self.scale_factor;
+
             for (text, x, y, color, font_size) in texts.iter() {
+                // Viewport culling: skip texts that are completely outside the visible area
+                // Text is visible if: y + line_height > clip_top AND y < viewport_height
+                let line_height = *font_size * 1.2;
+                if *y + line_height < clip_top_logical || *y * self.scale_factor > viewport_height_f {
+                    continue;
+                }
+
                 let physical_font_size = *font_size * self.scale_factor;
                 let cache_key = TextCacheKey {
                     text: text.clone(),
@@ -197,11 +214,19 @@ impl TextRenderer {
                         glyphon::Metrics::new(physical_font_size, physical_font_size * 1.2),
                     );
                     let attrs = glyphon::Attrs::new().family(glyphon::Family::SansSerif);
+
+                    // Use Basic shaping for ASCII text (much faster)
+                    let shaping = if Self::is_ascii_text(text) {
+                        glyphon::Shaping::Basic
+                    } else {
+                        glyphon::Shaping::Advanced
+                    };
+
                     buffer.set_text(
                         &mut self.glyphon_font_system,
                         text,
                         attrs,
-                        glyphon::Shaping::Advanced,
+                        shaping,
                     );
                     buffer.set_size(
                         &mut self.glyphon_font_system,
@@ -222,6 +247,10 @@ impl TextRenderer {
                     clip_top: *clip_top,
                 });
             }
+        }
+
+        if all_text_data.is_empty() {
+            return;
         }
 
         // Build text areas using collected data

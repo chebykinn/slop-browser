@@ -513,14 +513,17 @@ impl Tab {
 
     /// Collect image URLs from the layout tree that need to be loaded
     pub fn collect_pending_images(&mut self) {
-        // Resolve URLs in the layout tree and get list of all image URLs
-        let urls = self.layout_tree.resolve_image_urls(self.url.as_ref());
+        self.collect_pending_images_in_viewport(None);
+    }
+
+    /// Collect image URLs only for images within the visible viewport
+    /// If viewport_height is None, all images are collected
+    pub fn collect_pending_images_in_viewport(&mut self, viewport_height: Option<f32>) {
+        // Resolve URLs in the layout tree and get list of image URLs
+        let urls = self.layout_tree.resolve_image_urls_in_viewport(self.url.as_ref(), viewport_height);
         self.pending_images.clear();
 
-        log::info!("Found {} image URLs in layout tree", urls.len());
-        for url in &urls {
-            log::info!("  Image URL: {}", url);
-        }
+        log::info!("Found {} image URLs in layout tree (viewport: {:?})", urls.len(), viewport_height);
 
         for url in urls {
             // Skip if already cached
@@ -533,6 +536,15 @@ impl Tab {
 
     /// Load pending images synchronously using the loader
     pub fn load_images_sync(&mut self, loader: &Loader, gpu: &GpuContext, text_renderer: &mut TextRenderer) {
+        self.load_images_sync_with_relayout(loader, gpu, Some(text_renderer));
+    }
+
+    /// Load pending images without re-layout (faster for screenshot mode)
+    pub fn load_images_sync_fast(&mut self, loader: &Loader, gpu: &GpuContext) {
+        self.load_images_sync_with_relayout(loader, gpu, None);
+    }
+
+    fn load_images_sync_with_relayout(&mut self, loader: &Loader, gpu: &GpuContext, text_renderer: Option<&mut TextRenderer>) {
         let pending = std::mem::take(&mut self.pending_images);
         let loaded_count = pending.len();
 
@@ -575,10 +587,13 @@ impl Tab {
         }
 
         // Re-layout if we loaded any images (sizes may have changed)
+        // Skip re-layout if text_renderer is None (screenshot fast mode)
         if loaded_count > 0 {
-            self.layout_tree.build(&self.document, &self.style_computer, text_renderer);
-            // Re-resolve URLs to update texture IDs after rebuild
-            self.layout_tree.resolve_image_urls(self.url.as_ref());
+            if let Some(tr) = text_renderer {
+                self.layout_tree.build(&self.document, &self.style_computer, tr);
+                // Re-resolve URLs to update texture IDs after rebuild
+                self.layout_tree.resolve_image_urls(self.url.as_ref());
+            }
             // Re-apply texture IDs from cache
             for url in self.image_cache.urls() {
                 if let Some(texture_id) = self.image_cache.get_texture_id(url) {

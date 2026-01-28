@@ -53,7 +53,7 @@ pub fn layout_grid(
     );
 
     // Calculate container's content width
-    let content_width = style.width.unwrap_or_else(|| {
+    let content_width = style.width.map(|w| w.to_px(containing_width)).unwrap_or_else(|| {
         containing_width
             - layout_box.dimensions.margin.horizontal()
             - layout_box.dimensions.padding.horizontal()
@@ -133,7 +133,7 @@ pub fn layout_grid(
     // Set container height
     let total_height = row_tracks.positions.last().copied().unwrap_or(0.0)
         + row_tracks.sizes.last().copied().unwrap_or(0.0);
-    layout_box.dimensions.content.height = style.height.unwrap_or(total_height);
+    layout_box.dimensions.content.height = style.height.map(|h| h.to_px(total_height)).unwrap_or(total_height);
 }
 
 /// Layout a child to determine its intrinsic size
@@ -165,7 +165,7 @@ fn layout_child_intrinsic(child: &mut LayoutBox, containing_width: f32, text_ren
         child.dimensions.content.width = width;
         child.dimensions.content.height = height;
     } else if let Some(w) = style.width {
-        child.dimensions.content.width = w;
+        child.dimensions.content.width = w.to_px(containing_width);
     } else {
         let available = containing_width
             - child.dimensions.margin.horizontal()
@@ -175,7 +175,7 @@ fn layout_child_intrinsic(child: &mut LayoutBox, containing_width: f32, text_ren
     }
 
     if let Some(h) = style.height {
-        child.dimensions.content.height = h;
+        child.dimensions.content.height = h.to_px(child.dimensions.content.height);
     } else if child.text_content.is_none() {
         let mut child_height = 0.0f32;
         for grandchild in &mut child.children {

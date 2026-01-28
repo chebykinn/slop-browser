@@ -1,4 +1,5 @@
 use clap::Parser;
+use image::ImageEncoder;
 use rust_browser::app::BrowserSettings;
 use rust_browser::Browser;
 use rust_browser::render::gpu::GpuContext;
@@ -298,10 +299,12 @@ fn main() {
 fn run_screenshot_mode(url: &str, output_path: &str, width: u32, height: u32, debug: bool, settings: &BrowserSettings) {
     use wgpu::*;
 
+    let total_start = Instant::now();
     println!("Screenshot mode: {} -> {}", url, output_path);
     println!("Size: {}x{}", width, height);
 
     // Initialize SDL2 with a hidden window for GPU context
+    let t0 = Instant::now();
     sdl2::hint::set("SDL_VIDEODRIVER", "wayland");
     sdl2::hint::set("SDL_VIDEO_WAYLAND_SCALE_TO_DISPLAY", "1");
 
@@ -316,6 +319,8 @@ fn run_screenshot_mode(url: &str, output_path: &str, width: u32, height: u32, de
         .expect("Failed to create window");
 
     let window = Arc::new(window);
+    println!("[Timing] SDL2 init: {:.0}ms", t0.elapsed().as_secs_f32() * 1000.0);
+
     // Use same scale factor as normal browser mode
     let scale_factor = video_subsystem
         .display_dpi(0)
@@ -326,14 +331,23 @@ fn run_screenshot_mode(url: &str, output_path: &str, width: u32, height: u32, de
     let physical_width = (width as f32 * scale_factor) as u32;
     let physical_height = (height as f32 * scale_factor) as u32;
 
+    let t1 = Instant::now();
     let gpu = GpuContext::new(window.clone(), physical_width, physical_height);
+    println!("[Timing] GPU init: {:.0}ms", t1.elapsed().as_secs_f32() * 1000.0);
+
+    let t2 = Instant::now();
     let painter = Painter::new(&gpu);
+    println!("[Timing] Painter init: {:.0}ms", t2.elapsed().as_secs_f32() * 1000.0);
+
+    let t3 = Instant::now();
     let mut text_renderer = TextRenderer::new(&gpu, scale_factor);
+    println!("[Timing] TextRenderer init: {:.0}ms", t3.elapsed().as_secs_f32() * 1000.0);
 
     let chrome_height = 0.0; // No chrome in screenshot mode
     let mut browser = Browser::new(width as f32, height as f32 + chrome_height, settings.clone());
 
     // Navigate and wait for load
+    let t4 = Instant::now();
     println!("Loading {}...", url);
     browser.navigate(url, &mut text_renderer);
 
@@ -345,16 +359,20 @@ fn run_screenshot_mode(url: &str, output_path: &str, width: u32, height: u32, de
         browser.poll_loading(&mut text_renderer);
         std::thread::sleep(Duration::from_millis(10));
     }
+    println!("[Timing] Page load + parse: {:.0}ms", t4.elapsed().as_secs_f32() * 1000.0);
 
     if browser.is_loading() {
         eprintln!("Warning: Loading timed out after 30 seconds");
     }
 
-    // Load pending images
+    // Load only visible images (viewport culling + no re-layout for screenshot mode)
+    let t5 = Instant::now();
+    browser.collect_visible_images();
     while browser.has_pending_images() {
-        browser.load_pending_images(&gpu, &mut text_renderer);
+        browser.load_pending_images_fast(&gpu);
         std::thread::sleep(Duration::from_millis(10));
     }
+    println!("[Timing] Image loading: {:.0}ms", t5.elapsed().as_secs_f32() * 1000.0);
 
     println!("Page loaded, rendering...");
 
@@ -364,6 +382,7 @@ fn run_screenshot_mode(url: &str, output_path: &str, width: u32, height: u32, de
     }
 
     // Create offscreen texture at physical size (same as normal browser surface)
+    let t6 = Instant::now();
     let texture = gpu.device.create_texture(&TextureDescriptor {
         label: Some("Screenshot Texture"),
         size: Extent3d {
@@ -456,8 +475,10 @@ fn run_screenshot_mode(url: &str, output_path: &str, width: u32, height: u32, de
     );
 
     gpu.queue.submit(std::iter::once(encoder.finish()));
+    println!("[Timing] GPU render + submit: {:.0}ms", t6.elapsed().as_secs_f32() * 1000.0);
 
     // Read pixels
+    let t7 = Instant::now();
     let buffer_slice = output_buffer.slice(..);
     buffer_slice.map_async(MapMode::Read, |_| {});
     gpu.device.poll(Maintain::Wait);
@@ -465,27 +486,53 @@ fn run_screenshot_mode(url: &str, output_path: &str, width: u32, height: u32, de
     let data = buffer_slice.get_mapped_range();
 
     // Convert BGRA to RGBA and remove padding (at physical size)
-    let mut rgba_data = Vec::with_capacity((physical_width * physical_height * 4) as usize);
-    for y in 0..physical_height {
-        let row_start = (y * bytes_per_row) as usize;
-        for x in 0..physical_width {
-            let pixel_start = row_start + (x * 4) as usize;
+    // Pre-allocate exact size and use unsafe for speed in debug builds
+    let pixel_count = (physical_width * physical_height) as usize;
+    let mut rgba_data = vec![0u8; pixel_count * 4];
+
+    for y in 0..physical_height as usize {
+        let src_row_start = y * bytes_per_row as usize;
+        let dst_row_start = y * physical_width as usize * 4;
+
+        for x in 0..physical_width as usize {
+            let src = src_row_start + x * 4;
+            let dst = dst_row_start + x * 4;
             // BGRA -> RGBA
-            rgba_data.push(data[pixel_start + 2]); // R
-            rgba_data.push(data[pixel_start + 1]); // G
-            rgba_data.push(data[pixel_start]);     // B
-            rgba_data.push(data[pixel_start + 3]); // A
+            rgba_data[dst] = data[src + 2];     // R
+            rgba_data[dst + 1] = data[src + 1]; // G
+            rgba_data[dst + 2] = data[src];     // B
+            rgba_data[dst + 3] = data[src + 3]; // A
         }
     }
 
     drop(data);
     output_buffer.unmap();
+    println!("[Timing] GPU readback: {:.0}ms", t7.elapsed().as_secs_f32() * 1000.0);
 
-    // Save as PNG (at physical size - this matches what the user sees on screen)
-    let img = image::RgbaImage::from_raw(physical_width, physical_height, rgba_data)
-        .expect("Failed to create image from pixel data");
-
-    img.save(output_path).expect("Failed to save screenshot");
+    // Save image - use format based on file extension
+    let t8 = Instant::now();
+    if output_path.ends_with(".png") {
+        let file = std::fs::File::create(output_path).expect("Failed to create output file");
+        let writer = std::io::BufWriter::with_capacity(1024 * 1024, file);
+        let encoder = image::codecs::png::PngEncoder::new_with_quality(
+            writer,
+            image::codecs::png::CompressionType::Default,
+            image::codecs::png::FilterType::NoFilter,
+        );
+        encoder.write_image(
+            &rgba_data,
+            physical_width,
+            physical_height,
+            image::ExtendedColorType::Rgba8,
+        ).expect("Failed to save screenshot");
+    } else {
+        // For non-PNG formats, use image crate's auto-detection
+        let img = image::RgbaImage::from_raw(physical_width, physical_height, rgba_data)
+            .expect("Failed to create image from pixel data");
+        img.save(output_path).expect("Failed to save screenshot");
+    }
+    println!("[Timing] PNG save: {:.0}ms", t8.elapsed().as_secs_f32() * 1000.0);
+    println!("[Timing] TOTAL: {:.0}ms", total_start.elapsed().as_secs_f32() * 1000.0);
     println!("Screenshot saved to: {}", output_path);
 }
 

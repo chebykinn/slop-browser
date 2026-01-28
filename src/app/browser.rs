@@ -6,7 +6,6 @@ use crate::render::gpu::GpuContext;
 use crate::render::painter::{Color, DisplayCommand, Painter, Rect};
 use crate::render::text::TextRenderer;
 use crate::ui::Chrome;
-use std::time::Instant;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use wgpu::*;
@@ -241,6 +240,21 @@ impl Browser {
         self.display_list_dirty = true;
     }
 
+    /// Load pending images without re-layout (faster for screenshot mode)
+    pub fn load_pending_images_fast(&mut self, gpu: &GpuContext) {
+        let tab = &mut self.tabs[self.active_tab];
+        tab.load_images_sync_fast(&self.loader, gpu);
+        self.display_list_dirty = true;
+    }
+
+    /// Re-collect pending images considering only those in the visible viewport
+    /// This is useful for screenshot mode where we only need visible images
+    pub fn collect_visible_images(&mut self) {
+        let viewport_height = self.viewport_height - self.chrome_height;
+        let tab = &mut self.tabs[self.active_tab];
+        tab.collect_pending_images_in_viewport(Some(viewport_height));
+    }
+
     pub fn go_back(&mut self, _text_renderer: &mut TextRenderer) {
         let tab = &mut self.tabs[self.active_tab];
         if let Some(url) = tab.history.go_back().map(|s| s.to_string()) {
@@ -460,6 +474,7 @@ impl Browser {
 
         let y_offset = if include_chrome { self.chrome_height } else { 0.0 };
         let content_list = self.active_tab().build_display_list();
+
         Self::collect_display_commands(
             &content_list.commands,
             y_offset,
@@ -535,8 +550,13 @@ impl Browser {
             );
         }
 
-        // Render images
+        // Render images with viewport culling
         for (rect, texture_id, opacity) in content_images {
+            // Skip images outside viewport
+            if rect.y + rect.height < chrome_height || rect.y > viewport_height {
+                continue;
+            }
+
             if let Some(texture_view) = image_cache.get_texture_view(*texture_id) {
                 painter.draw_image(
                     gpu,

@@ -17,7 +17,7 @@ pub fn calculate_block_width(
     let total_horizontal = margin_left + margin_right + padding_left + padding_right + border_left + border_right;
 
     let content_width = if let Some(w) = style.width {
-        w
+        w.to_px(containing_width)
     } else {
         (containing_width - total_horizontal).max(0.0)
     };
@@ -56,8 +56,8 @@ pub fn calculate_block_position(
         + layout_box.dimensions.padding.top;
 }
 
-pub fn calculate_block_height(layout_box: &mut LayoutBox) {
+pub fn calculate_block_height(layout_box: &mut LayoutBox, containing_height: f32) {
     if let Some(h) = layout_box.style.height {
-        layout_box.dimensions.content.height = h;
+        layout_box.dimensions.content.height = h.to_px(containing_height);
     }
 }

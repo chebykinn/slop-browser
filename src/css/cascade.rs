@@ -197,16 +197,16 @@ impl StyleComputer {
         // width attribute
         if let Some(width) = element.attributes.get("width") {
             if let Ok(px) = width.trim_end_matches("px").parse::<f32>() {
-                style.width = Some(px);
+                style.width = Some(super::computed::LengthOrPercentage::Px(px));
             } else if let Ok(percent) = width.trim_end_matches('%').parse::<f32>() {
-                style.width = Some(percent / 100.0 * self.viewport_width);
+                style.width = Some(super::computed::LengthOrPercentage::Percent(percent));
             }
         }
 
         // height attribute
         if let Some(height) = element.attributes.get("height") {
             if let Ok(px) = height.trim_end_matches("px").parse::<f32>() {
-                style.height = Some(px);
+                style.height = Some(super::computed::LengthOrPercentage::Px(px));
             }
         }
 

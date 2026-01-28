@@ -23,9 +23,9 @@ pub struct ComputedStyle {
     pub border_left_width: f32,
     pub border_color: Color,
 
-    // Dimensions
-    pub width: Option<f32>,
-    pub height: Option<f32>,
+    // Dimensions (can be absolute px or percentage of containing block)
+    pub width: Option<LengthOrPercentage>,
+    pub height: Option<LengthOrPercentage>,
     pub min_width: Option<f32>,
     pub min_height: Option<f32>,
     pub max_width: Option<f32>,
@@ -112,6 +112,44 @@ pub struct ComputedStyle {
     // Table-specific properties
     pub border_collapse: bool,
     pub border_spacing: f32,
+
+    // Float and clear
+    pub float: Float,
+    pub clear: Clear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum Float {
+    #[default]
+    None,
+    Left,
+    Right,
+}
+
+/// A length that can be either absolute pixels or a percentage
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LengthOrPercentage {
+    Px(f32),
+    Percent(f32),
+}
+
+impl LengthOrPercentage {
+    /// Resolve to pixels given a containing block size
+    pub fn to_px(&self, containing_size: f32) -> f32 {
+        match self {
+            LengthOrPercentage::Px(px) => *px,
+            LengthOrPercentage::Percent(pct) => containing_size * pct / 100.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum Clear {
+    #[default]
+    None,
+    Left,
+    Right,
+    Both,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -427,6 +465,10 @@ impl Default for ComputedStyle {
             // Table-specific properties
             border_collapse: false,
             border_spacing: 0.0,
+
+            // Float and clear
+            float: Float::default(),
+            clear: Clear::default(),
         }
     }
 }
@@ -516,6 +558,58 @@ impl ComputedStyle {
                     self.line_height = *n;
                 } else if let Some(px) = value.to_px(parent_font_size, vw, vh) {
                     self.line_height = px / self.font_size;
+                }
+            }
+
+            // font shorthand: font: [style] [variant] [weight] size[/line-height] family
+            // Simplified parsing - we primarily care about font-size and line-height
+            "font" => {
+                match value {
+                    Value::List(values) => {
+                        let mut found_size = false;
+                        for (i, v) in values.iter().enumerate() {
+                            // Try to extract font-size (will be a length value)
+                            if let Value::Length(px, _) = v {
+                                if *px >= 1.0 && *px <= 200.0 {
+                                    self.font_size = *px;
+                                    found_size = true;
+                                    // Check if next non-empty value is a number (line-height)
+                                    // The / delimiter becomes an empty keyword, so skip it
+                                    for next_v in values.iter().skip(i + 1) {
+                                        match next_v {
+                                            Value::Number(n) if *n > 0.0 && *n < 10.0 => {
+                                                self.line_height = *n;
+                                                break;
+                                            }
+                                            Value::Keyword(k) if k.is_empty() => continue,
+                                            _ => break,
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        // If no length found, try numbers (for unitless font-size)
+                        if !found_size {
+                            for v in values {
+                                if let Value::Number(n) = v {
+                                    if *n >= 1.0 && *n <= 200.0 {
+                                        self.font_size = *n;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Value::Length(px, _) => {
+                        self.font_size = *px;
+                    }
+                    Value::Number(n) => {
+                        if *n >= 1.0 && *n <= 200.0 {
+                            self.font_size = *n;
+                        }
+                    }
+                    _ => {}
                 }
             }
 
@@ -668,15 +762,19 @@ impl ComputedStyle {
             "width" => {
                 if let Value::Auto = value {
                     self.width = None;
+                } else if let Value::Percentage(pct) = value {
+                    self.width = Some(LengthOrPercentage::Percent(*pct));
                 } else if let Some(px) = value.to_px(parent_font_size, vw, vh) {
-                    self.width = Some(px);
+                    self.width = Some(LengthOrPercentage::Px(px));
                 }
             }
             "height" => {
                 if let Value::Auto = value {
                     self.height = None;
+                } else if let Value::Percentage(pct) = value {
+                    self.height = Some(LengthOrPercentage::Percent(*pct));
                 } else if let Some(px) = value.to_px(parent_font_size, vw, vh) {
-                    self.height = Some(px);
+                    self.height = Some(LengthOrPercentage::Px(px));
                 }
             }
 
@@ -1149,6 +1247,29 @@ impl ComputedStyle {
             "border-spacing" => {
                 if let Some(px) = value.to_px(parent_font_size, vw, vh) {
                     self.border_spacing = px;
+                }
+            }
+
+            // Float and clear
+            "float" => {
+                if let Some(kw) = value.as_keyword() {
+                    self.float = match kw {
+                        "left" => Float::Left,
+                        "right" => Float::Right,
+                        "none" => Float::None,
+                        _ => Float::None,
+                    };
+                }
+            }
+            "clear" => {
+                if let Some(kw) = value.as_keyword() {
+                    self.clear = match kw {
+                        "left" => Clear::Left,
+                        "right" => Clear::Right,
+                        "both" => Clear::Both,
+                        "none" => Clear::None,
+                        _ => Clear::None,
+                    };
                 }
             }
 

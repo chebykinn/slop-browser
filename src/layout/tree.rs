@@ -1,5 +1,5 @@
 use super::box_model::{BoxDimensions, EdgeSizes};
-use crate::css::computed::{BoxSizing, ComputedStyle, Display};
+use crate::css::computed::{BoxSizing, Clear, ComputedStyle, Display, Float, LengthOrPercentage};
 use crate::css::StyleComputer;
 use crate::dom::{Document, NodeData, NodeId};
 use crate::render::painter::{Color, DisplayList, Rect};
@@ -186,6 +186,198 @@ impl LayoutBox {
     }
 }
 
+/// Represents a positioned float
+#[derive(Debug, Clone)]
+struct FloatBox {
+    rect: Rect,
+    float_type: Float,
+}
+
+/// Context for tracking floats during layout
+#[derive(Debug, Clone, Default)]
+struct FloatContext {
+    left_floats: Vec<FloatBox>,
+    right_floats: Vec<FloatBox>,
+}
+
+impl FloatContext {
+    fn new() -> Self {
+        Self {
+            left_floats: Vec::new(),
+            right_floats: Vec::new(),
+        }
+    }
+
+    /// Add a left float
+    fn add_left_float(&mut self, rect: Rect) {
+        self.left_floats.push(FloatBox {
+            rect,
+            float_type: Float::Left,
+        });
+    }
+
+    /// Add a right float
+    fn add_right_float(&mut self, rect: Rect) {
+        self.right_floats.push(FloatBox {
+            rect,
+            float_type: Float::Right,
+        });
+    }
+
+    /// Get the clear Y position for the given clear type
+    fn get_clear_y(&self, clear: Clear) -> f32 {
+        let mut clear_y: f32 = 0.0;
+        match clear {
+            Clear::Left | Clear::Both => {
+                for float_box in &self.left_floats {
+                    clear_y = clear_y.max(float_box.rect.y + float_box.rect.height);
+                }
+            }
+            _ => {}
+        }
+        match clear {
+            Clear::Right | Clear::Both => {
+                for float_box in &self.right_floats {
+                    clear_y = clear_y.max(float_box.rect.y + float_box.rect.height);
+                }
+            }
+            _ => {}
+        }
+        clear_y
+    }
+
+    /// Find position for a left float at the given Y position
+    fn find_left_float_position(&self, y: f32, width: f32, container_width: f32) -> (f32, f32) {
+        let mut x: f32 = 0.0;
+        let mut test_y = y;
+
+        // Try to find a position, moving down if needed
+        loop {
+            x = 0.0;
+            let mut fits = true;
+
+            // Check all left floats that overlap this Y position
+            for float_box in &self.left_floats {
+                if test_y < float_box.rect.y + float_box.rect.height
+                    && test_y + 0.1 >= float_box.rect.y
+                {
+                    // Overlaps, need to position after this float
+                    x = x.max(float_box.rect.x + float_box.rect.width);
+                }
+            }
+
+            // Check if there's room (considering right floats)
+            let available_right = self.get_available_right_edge(test_y, container_width);
+            if x + width <= available_right {
+                fits = true;
+            } else {
+                fits = false;
+            }
+
+            if fits || test_y > 10000.0 {
+                break;
+            }
+
+            // Move down past the lowest overlapping float
+            let mut next_y = test_y + 1.0;
+            for float_box in &self.left_floats {
+                if test_y >= float_box.rect.y && test_y < float_box.rect.y + float_box.rect.height {
+                    next_y = next_y.max(float_box.rect.y + float_box.rect.height);
+                }
+            }
+            for float_box in &self.right_floats {
+                if test_y >= float_box.rect.y && test_y < float_box.rect.y + float_box.rect.height {
+                    next_y = next_y.max(float_box.rect.y + float_box.rect.height);
+                }
+            }
+            test_y = next_y;
+        }
+
+        (x, test_y)
+    }
+
+    /// Find position for a right float at the given Y position
+    fn find_right_float_position(&self, y: f32, width: f32, container_width: f32) -> (f32, f32) {
+        let mut test_y = y;
+
+        loop {
+            let mut right_edge = container_width;
+
+            // Check all right floats that overlap this Y position
+            for float_box in &self.right_floats {
+                if test_y < float_box.rect.y + float_box.rect.height
+                    && test_y + 0.1 >= float_box.rect.y
+                {
+                    right_edge = right_edge.min(float_box.rect.x);
+                }
+            }
+
+            // Check left floats too
+            let left_edge = self.get_available_left_edge(test_y);
+            let x = right_edge - width;
+
+            if x >= left_edge || test_y > 10000.0 {
+                return (x, test_y);
+            }
+
+            // Move down
+            let mut next_y = test_y + 1.0;
+            for float_box in &self.left_floats {
+                if test_y >= float_box.rect.y && test_y < float_box.rect.y + float_box.rect.height {
+                    next_y = next_y.max(float_box.rect.y + float_box.rect.height);
+                }
+            }
+            for float_box in &self.right_floats {
+                if test_y >= float_box.rect.y && test_y < float_box.rect.y + float_box.rect.height {
+                    next_y = next_y.max(float_box.rect.y + float_box.rect.height);
+                }
+            }
+            test_y = next_y;
+        }
+    }
+
+    /// Get the left edge available at a given Y (after left floats)
+    fn get_available_left_edge(&self, y: f32) -> f32 {
+        let mut left_edge: f32 = 0.0;
+        for float_box in &self.left_floats {
+            if y >= float_box.rect.y && y < float_box.rect.y + float_box.rect.height {
+                left_edge = left_edge.max(float_box.rect.x + float_box.rect.width);
+            }
+        }
+        left_edge
+    }
+
+    /// Get the right edge available at a given Y (before right floats)
+    fn get_available_right_edge(&self, y: f32, container_width: f32) -> f32 {
+        let mut right_edge = container_width;
+        for float_box in &self.right_floats {
+            if y >= float_box.rect.y && y < float_box.rect.y + float_box.rect.height {
+                right_edge = right_edge.min(float_box.rect.x);
+            }
+        }
+        right_edge
+    }
+
+    /// Get the available width at a given Y position
+    fn get_available_width(&self, y: f32, container_width: f32) -> (f32, f32) {
+        let left = self.get_available_left_edge(y);
+        let right = self.get_available_right_edge(y, container_width);
+        (left, right - left)
+    }
+
+    /// Get the bottom of all floats
+    fn get_floats_bottom(&self) -> f32 {
+        let mut bottom: f32 = 0.0;
+        for float_box in &self.left_floats {
+            bottom = bottom.max(float_box.rect.y + float_box.rect.height);
+        }
+        for float_box in &self.right_floats {
+            bottom = bottom.max(float_box.rect.y + float_box.rect.height);
+        }
+        bottom
+    }
+}
+
 pub struct LayoutTree {
     pub root: Option<LayoutBox>,
     pub viewport_width: f32,
@@ -221,7 +413,8 @@ impl LayoutTree {
             let t0 = Instant::now();
             let mut root_box = self.build_layout_tree(document, body, style_computer);
             let t1 = Instant::now();
-            self.layout(&mut root_box, self.viewport_width, text_renderer);
+            let mut float_ctx = FloatContext::new();
+            self.layout(&mut root_box, self.viewport_width, text_renderer, &mut float_ctx);
             let t2 = Instant::now();
 
             // Position root so border_box starts at (0, 0)
@@ -341,19 +534,19 @@ impl LayoutTree {
         }
     }
 
-    fn layout(&self, layout_box: &mut LayoutBox, containing_width: f32, text_renderer: &mut TextRenderer) {
+    fn layout(&self, layout_box: &mut LayoutBox, containing_width: f32, text_renderer: &mut TextRenderer, float_ctx: &mut FloatContext) {
         match layout_box.box_type {
             BoxType::Block | BoxType::InlineBlock => {
-                self.layout_block(layout_box, containing_width, text_renderer);
+                self.layout_block(layout_box, containing_width, text_renderer, float_ctx);
             }
             BoxType::Inline => {
-                self.layout_inline(layout_box, containing_width, text_renderer);
+                self.layout_inline(layout_box, containing_width, text_renderer, float_ctx);
             }
             BoxType::Text => {
                 self.layout_text(layout_box, containing_width, text_renderer);
             }
             BoxType::Anonymous => {
-                self.layout_block(layout_box, containing_width, text_renderer);
+                self.layout_block(layout_box, containing_width, text_renderer, float_ctx);
             }
             BoxType::Flex => {
                 super::flex::layout_flex(layout_box, containing_width, text_renderer);
@@ -369,12 +562,12 @@ impl LayoutTree {
             }
             BoxType::TableRow | BoxType::TableCell | BoxType::TableRowGroup => {
                 // These are laid out by their parent table
-                self.layout_block(layout_box, containing_width, text_renderer);
+                self.layout_block(layout_box, containing_width, text_renderer, float_ctx);
             }
         }
     }
 
-    fn layout_block(&self, layout_box: &mut LayoutBox, containing_width: f32, text_renderer: &mut TextRenderer) {
+    fn layout_block(&self, layout_box: &mut LayoutBox, containing_width: f32, text_renderer: &mut TextRenderer, float_ctx: &mut FloatContext) {
         let style = &layout_box.style;
 
         layout_box.dimensions.margin = EdgeSizes::new(
@@ -398,7 +591,8 @@ impl LayoutTree {
 
         // Calculate content width based on box-sizing
         let content_width = match style.width {
-            Some(specified_width) => {
+            Some(len_pct) => {
+                let specified_width = len_pct.to_px(containing_width);
                 match style.box_sizing {
                     BoxSizing::ContentBox => specified_width,
                     BoxSizing::BorderBox => {
@@ -429,23 +623,120 @@ impl LayoutTree {
 
         layout_box.dimensions.content.width = final_width;
 
+        // Create a new float context for children.
+        // Note: In true CSS, floats escape unless container establishes a BFC.
+        // For now, floats are contained but we include their height in the parent's height.
+        let mut child_float_ctx = FloatContext::new();
         let mut child_y = 0.0;
-        for child in &mut layout_box.children {
-            self.layout(child, final_width, text_renderer);
-            child.dimensions.content.x = layout_box.dimensions.padding.left
-                + layout_box.dimensions.border.left
-                + child.dimensions.margin.left;
-            child.dimensions.content.y = child_y
-                + layout_box.dimensions.padding.top
-                + layout_box.dimensions.border.top
-                + child.dimensions.margin.top;
 
-            child_y = child.dimensions.margin_box().bottom();
+        for child in &mut layout_box.children {
+            let child_float = child.style.float;
+            let child_clear = child.style.clear;
+
+            // Handle clear property
+            if child_clear != Clear::None {
+                let clear_y = child_float_ctx.get_clear_y(child_clear);
+                if clear_y > child_y {
+                    child_y = clear_y;
+                }
+            }
+
+            // Layout the child first to get its dimensions
+            self.layout(child, final_width, text_renderer, &mut child_float_ctx);
+
+            let child_margin_box_width = child.dimensions.margin_box().width;
+            let child_margin_box_height = child.dimensions.margin_box().height;
+
+            match child_float {
+                Float::Left => {
+                    // Find position for left float
+                    let (float_x, float_y) = child_float_ctx.find_left_float_position(
+                        child_y,
+                        child_margin_box_width,
+                        final_width,
+                    );
+
+                    // Position is relative to parent's content box (0,0)
+                    // Don't add parent's padding/border - that's handled in rendering
+                    child.dimensions.content.x = float_x
+                        + child.dimensions.margin.left
+                        + child.dimensions.border.left
+                        + child.dimensions.padding.left;
+
+                    child.dimensions.content.y = float_y
+                        + child.dimensions.margin.top
+                        + child.dimensions.border.top
+                        + child.dimensions.padding.top;
+
+                    // Add to float context
+                    child_float_ctx.add_left_float(Rect::new(
+                        float_x,
+                        float_y,
+                        child_margin_box_width,
+                        child_margin_box_height,
+                    ));
+                }
+                Float::Right => {
+                    // Find position for right float
+                    let (float_x, float_y) = child_float_ctx.find_right_float_position(
+                        child_y,
+                        child_margin_box_width,
+                        final_width,
+                    );
+
+                    // Position is relative to parent's content box (0,0)
+                    // Don't add parent's padding/border - that's handled in rendering
+                    child.dimensions.content.x = float_x
+                        + child.dimensions.margin.left
+                        + child.dimensions.border.left
+                        + child.dimensions.padding.left;
+
+                    child.dimensions.content.y = float_y
+                        + child.dimensions.margin.top
+                        + child.dimensions.border.top
+                        + child.dimensions.padding.top;
+
+                    // Add to float context
+                    child_float_ctx.add_right_float(Rect::new(
+                        float_x,
+                        float_y,
+                        child_margin_box_width,
+                        child_margin_box_height,
+                    ));
+                }
+                Float::None => {
+                    // Normal flow - but consider floats for available width
+                    let (left_offset, _available_width) = child_float_ctx.get_available_width(child_y, final_width);
+
+                    // Position is relative to parent's content box (0,0)
+                    // Don't add parent's padding/border - that's handled in rendering
+                    child.dimensions.content.x = left_offset
+                        + child.dimensions.margin.left
+                        + child.dimensions.border.left
+                        + child.dimensions.padding.left;
+
+                    child.dimensions.content.y = child_y
+                        + child.dimensions.margin.top
+                        + child.dimensions.border.top
+                        + child.dimensions.padding.top;
+
+                    // Non-floated elements advance the Y cursor
+                    child_y += child_margin_box_height;
+                }
+            }
         }
 
+        // Include floats in parent height so siblings flow after floats.
+        // This is a simplification - in true CSS, only BFC-establishing blocks contain floats.
+        // But for practical web pages, this makes more sense.
+        let float_bottom = child_float_ctx.get_clear_y(Clear::Both);
+        let children_bottom = child_y.max(float_bottom);
+
         // Calculate content height based on box-sizing
+        // Note: percentage heights resolve against containing block height, but for now use a reasonable default
         let content_height = match style.height {
-            Some(specified_height) => {
+            Some(len_pct) => {
+                let specified_height = len_pct.to_px(children_bottom); // Use children height as containing block for percentages
                 match style.box_sizing {
                     BoxSizing::ContentBox => specified_height,
                     BoxSizing::BorderBox => {
@@ -457,7 +748,7 @@ impl LayoutTree {
                     }
                 }
             }
-            None => child_y,
+            None => children_bottom,
         };
 
         // Apply min/max height constraints
@@ -472,12 +763,12 @@ impl LayoutTree {
         layout_box.dimensions.content.height = final_height;
     }
 
-    fn layout_inline(&self, layout_box: &mut LayoutBox, containing_width: f32, text_renderer: &mut TextRenderer) {
+    fn layout_inline(&self, layout_box: &mut LayoutBox, containing_width: f32, text_renderer: &mut TextRenderer, float_ctx: &mut FloatContext) {
         let mut total_width = 0.0;
         let mut max_height = 0.0f32;
 
         for child in &mut layout_box.children {
-            self.layout(child, containing_width, text_renderer);
+            self.layout(child, containing_width, text_renderer, float_ctx);
             child.dimensions.content.x = total_width;
             total_width += child.dimensions.margin_box().width;
             max_height = max_height.max(child.dimensions.margin_box().height);
@@ -534,24 +825,30 @@ impl LayoutTree {
 
         // Determine final dimensions based on CSS properties and intrinsic size
         let (final_width, final_height) = match (style.width, style.height) {
-            (Some(w), Some(h)) => (w, h),
+            (Some(w), Some(h)) => {
+                let w_px = w.to_px(containing_width);
+                let h_px = h.to_px(intrinsic_height); // height percentage relative to intrinsic
+                (w_px, h_px)
+            }
             (Some(w), None) => {
+                let w_px = w.to_px(containing_width);
                 // Width specified, calculate height to maintain aspect ratio
                 let aspect = if intrinsic_width > 0.0 {
                     intrinsic_height / intrinsic_width
                 } else {
                     0.5
                 };
-                (w, w * aspect)
+                (w_px, w_px * aspect)
             }
             (None, Some(h)) => {
+                let h_px = h.to_px(intrinsic_height);
                 // Height specified, calculate width to maintain aspect ratio
                 let aspect = if intrinsic_height > 0.0 {
                     intrinsic_width / intrinsic_height
                 } else {
                     2.0
                 };
-                (h * aspect, h)
+                (h_px * aspect, h_px)
             }
             (None, None) => {
                 // Use intrinsic size, but constrain to available width
@@ -925,9 +1222,15 @@ impl LayoutTree {
     /// Resolve image URLs in place and return list of resolved URLs
     /// This updates image_src in the layout boxes to resolved URLs
     pub fn resolve_image_urls(&mut self, base_url: Option<&url::Url>) -> Vec<String> {
+        self.resolve_image_urls_in_viewport(base_url, None)
+    }
+
+    /// Resolve image URLs only for images within the visible viewport
+    /// If viewport_height is None, all images are included
+    pub fn resolve_image_urls_in_viewport(&mut self, base_url: Option<&url::Url>, viewport_height: Option<f32>) -> Vec<String> {
         let mut urls = Vec::new();
         if let Some(root) = &mut self.root {
-            Self::resolve_image_urls_recursive(root, base_url, &mut urls);
+            Self::resolve_image_urls_recursive(root, base_url, &mut urls, viewport_height, self.scroll_y);
         }
         urls
     }
@@ -936,7 +1239,39 @@ impl LayoutTree {
         layout_box: &mut LayoutBox,
         base_url: Option<&url::Url>,
         urls: &mut Vec<String>,
+        viewport_height: Option<f32>,
+        scroll_offset: f32,
     ) {
+        // Viewport culling: skip images that are completely outside the visible area
+        if let Some(vh) = viewport_height {
+            let box_y = layout_box.dimensions.content.y;
+            let box_height = layout_box.dimensions.content.height;
+            let visible_y = box_y - scroll_offset;
+            let visible_bottom = visible_y + box_height;
+            // Skip if entirely above or below viewport
+            if visible_bottom < 0.0 || visible_y > vh {
+                // Still need to resolve URLs for the tree, just don't add to load list
+                if let Some(src) = &layout_box.image_src {
+                    let resolved = if src.starts_with("http://") || src.starts_with("https://") || src.starts_with("data:") {
+                        Some(src.clone())
+                    } else if let Some(base) = base_url {
+                        base.join(src).ok().map(|u| u.to_string())
+                    } else {
+                        None
+                    };
+                    if let Some(resolved_url) = resolved {
+                        layout_box.image_src = Some(resolved_url);
+                    }
+                }
+                // Recursively resolve children but don't add their URLs either
+                for child in &mut layout_box.children {
+                    // For off-screen containers, check if any child might be visible
+                    Self::resolve_image_urls_recursive(child, base_url, urls, viewport_height, scroll_offset);
+                }
+                return;
+            }
+        }
+
         if let Some(src) = &layout_box.image_src {
             // Resolve the URL
             let resolved = if src.starts_with("http://") || src.starts_with("https://") || src.starts_with("data:") {
@@ -956,7 +1291,7 @@ impl LayoutTree {
             }
         }
         for child in &mut layout_box.children {
-            Self::resolve_image_urls_recursive(child, base_url, urls);
+            Self::resolve_image_urls_recursive(child, base_url, urls, viewport_height, scroll_offset);
         }
     }
 

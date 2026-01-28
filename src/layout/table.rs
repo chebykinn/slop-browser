@@ -35,7 +35,7 @@ pub fn layout_table(layout_box: &mut LayoutBox, containing_width: f32, text_rend
     let border_collapse = style.border_collapse;
 
     // Calculate available content width
-    let available_width = style.width.unwrap_or_else(|| {
+    let available_width = style.width.map(|w| w.to_px(containing_width)).unwrap_or_else(|| {
         containing_width
             - layout_box.dimensions.margin.horizontal()
             - layout_box.dimensions.padding.horizontal()
@@ -133,7 +133,7 @@ pub fn layout_table(layout_box: &mut LayoutBox, containing_width: f32, text_rend
     }
 
     layout_box.dimensions.content.width = available_width;
-    layout_box.dimensions.content.height = style.height.unwrap_or(y_position);
+    layout_box.dimensions.content.height = style.height.map(|h| h.to_px(y_position)).unwrap_or(y_position);
 }
 
 /// Collect row indices from table children (handles both direct rows and row groups)
@@ -283,7 +283,7 @@ fn layout_table_cell(cell: &mut LayoutBox, available_width: f32, text_renderer: 
         child_y = child.dimensions.margin_box().bottom();
     }
 
-    cell.dimensions.content.height = style.height.unwrap_or(child_y);
+    cell.dimensions.content.height = style.height.map(|h| h.to_px(child_y)).unwrap_or(child_y);
 }
 
 /// Layout a block-level child (fallback for non-table elements within tables)
@@ -309,7 +309,7 @@ fn layout_block_child(child: &mut LayoutBox, containing_width: f32, text_rendere
         style.border_left_width,
     );
 
-    let content_width = style.width.unwrap_or_else(|| {
+    let content_width = style.width.map(|w| w.to_px(containing_width)).unwrap_or_else(|| {
         containing_width
             - child.dimensions.margin.horizontal()
             - child.dimensions.padding.horizontal()
@@ -331,6 +331,6 @@ fn layout_block_child(child: &mut LayoutBox, containing_width: f32, text_rendere
             nested.dimensions.content.y = child_y + nested.dimensions.margin.top;
             child_y = nested.dimensions.margin_box().bottom();
         }
-        child.dimensions.content.height = style.height.unwrap_or(child_y);
+        child.dimensions.content.height = style.height.map(|h| h.to_px(child_y)).unwrap_or(child_y);
     }
 }
