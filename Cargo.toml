@@ -1,0 +1,45 @@
+[package]
+name = "rust-browser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# HTML/CSS Parsing
+html5ever = "0.27"
+markup5ever_rcdom = "0.3"
+cssparser = "0.34"
+
+# Windowing/Input
+sdl2 = { version = "0.37", features = ["raw-window-handle"] }
+
+# GPU Rendering - use wgpu 22 to match glyphon 0.6
+wgpu = "22.1"
+bytemuck = { version = "1.14", features = ["derive"] }
+
+# Text Rendering
+glyphon = "0.6"
+cosmic-text = "0.12"
+
+# Networking
+reqwest = { version = "0.12", features = ["blocking", "cookies", "stream"] }
+url = "2.5"
+urlencoding = "2.1"
+futures-util = "0.3"
+base64 = "0.22"
+
+# Image Decoding
+image = "0.25"
+resvg = "0.44"
+
+# Async
+tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
+pollster = "0.4"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Utilities
+thiserror = "2.0"
+log = "0.4"
+env_logger = "0.11"
+raw-window-handle = "0.6"

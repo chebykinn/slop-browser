@@ -1,0 +1,181 @@
+/* Default browser styles */
+
+html {
+    display: block;
+}
+
+body {
+    display: block;
+    margin: 8px;
+}
+
+head {
+    display: none;
+}
+
+title, style, script, link, meta {
+    display: none;
+}
+
+h1 {
+    display: block;
+    font-size: 2em;
+    font-weight: bold;
+    margin-top: 0.67em;
+    margin-bottom: 0.67em;
+}
+
+h2 {
+    display: block;
+    font-size: 1.5em;
+    font-weight: bold;
+    margin-top: 0.83em;
+    margin-bottom: 0.83em;
+}
+
+h3 {
+    display: block;
+    font-size: 1.17em;
+    font-weight: bold;
+    margin-top: 1em;
+    margin-bottom: 1em;
+}
+
+h4 {
+    display: block;
+    font-weight: bold;
+    margin-top: 1.33em;
+    margin-bottom: 1.33em;
+}
+
+h5 {
+    display: block;
+    font-size: 0.83em;
+    font-weight: bold;
+    margin-top: 1.67em;
+    margin-bottom: 1.67em;
+}
+
+h6 {
+    display: block;
+    font-size: 0.67em;
+    font-weight: bold;
+    margin-top: 2.33em;
+    margin-bottom: 2.33em;
+}
+
+p {
+    display: block;
+    margin-top: 1em;
+    margin-bottom: 1em;
+}
+
+div {
+    display: block;
+}
+
+span {
+    display: inline;
+}
+
+a {
+    display: inline;
+    color: blue;
+    text-decoration: underline;
+}
+
+strong, b {
+    display: inline;
+    font-weight: bold;
+}
+
+em, i {
+    display: inline;
+}
+
+ul, ol {
+    display: block;
+    margin-top: 1em;
+    margin-bottom: 1em;
+    padding-left: 40px;
+}
+
+li {
+    display: block;
+}
+
+br {
+    display: block;
+}
+
+hr {
+    display: block;
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+    border-width: 1px;
+}
+
+img {
+    display: inline-block;
+}
+
+pre {
+    display: block;
+    font-family: monospace;
+    margin-top: 1em;
+    margin-bottom: 1em;
+}
+
+code {
+    display: inline;
+    font-family: monospace;
+}
+
+blockquote {
+    display: block;
+    margin-top: 1em;
+    margin-bottom: 1em;
+    margin-left: 40px;
+    margin-right: 40px;
+}
+
+table {
+    display: block;
+}
+
+tr {
+    display: block;
+}
+
+td, th {
+    display: inline-block;
+    padding: 2px;
+}
+
+form {
+    display: block;
+}
+
+input {
+    display: inline-block;
+}
+
+button {
+    display: inline-block;
+}
+
+textarea {
+    display: inline-block;
+}
+
+select {
+    display: inline-block;
+}
+
+label {
+    display: inline;
+}
+
+header, footer, main, section, article, aside, nav {
+    display: block;
+}
